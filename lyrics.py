@@ -1,171 +1,73 @@
 #!/usr/bin/env python3
-import os, sys, re, shutil, difflib, tempfile, requests
-import numpy as np
-import sounddevice as sd
-import soundfile as sf
-import pyfiglet
+import time
+import sys
+import os
 
-#if the lyrics don't appear, make sure the file is the song name, preferably (songname, author).mp3
-AUDIO_FILE   = "Sweather Weather.mp3"   # your song hear
-START_TIME   = 39  # if you want to skip in certain parts
+VERDE = "\033[95m"
 
-LRC_FOLDER   = os.path.expanduser("~/lyrics")
-BLOCKSIZE    = 2048
+MORADO_CLARO = "\033[38,129m"
+
+ROSADO = "\033[38,5,205m"
+
+def limpiar_consola():
+    os.system('cls' if os.name == 'nt' else `clear`)
+
+===subtitulos = [
+    ("My mind says, no you're not good for me" , 1.6),
+    ("You're not good,", 0.5),
+    ("but my heart's made up on you", 1.5),
+    ("My body can't take what you give to me", 1.6)
+    ("what you get,", 0.5),
+    ("got my heart made up on you", 1.6),
+    ("wo oh, wo oh, wo oh", 4.5),
+    ("got my heart made up on you", 1.6)
+,===
+
+===subtitulos = [
+    ("Here we go...", 1.6),
+    ("Come with me ...", 1.6),
+    ("There's a world out there that we should see...", 2.5),
+    ("Take my hand...", 1.6),
+    ("Close your eyes... ", 1.6),
+    ("With you right here, I'm a rocketeer", 3,2),
+    ("Let's fly (fly, fly, fly, fly,)", 4.5),
+    ("Up, up, here we go, go", 1.3),
+    ("Up, up, here we go, go", 1.3),
+    ("Let's fly (fly, fly, fly, fly,)", 4,5),
+    ("Up, up, here we gp, go", 1.3),
+    ("Where we stop? Nobody knows (knows)", 2,5)
+]===
+
+subtitulos = [
+    ("Sometimes, you'd ask me fot something different", 1.8),
+    ("Hated when you did it,", 1.5),
+    ("I wish that you didn't , 2.8),
+    ("I would do things and you'd get annoyed", 2.5),
+    ("Should've never done them,", 1.6),
+    ("I whish I was different", 3.0),
+    ("Why do we have to step away now?", 1.3),
+    ("It's been a year, been a couple days now", 0.4),
+    ("Since you called me", 1.6),
+    ("Sayin' you're worried", 2.0),				
+    ("Been hard for me dealin' with this space now", 1.2),
+    ("No company, wishin' we could sit down", 0.4),
+    ("Cause I'm sorry...,", 1.1),
+    ("but you don't want me...", 1.1)
+]
 
 
+def escribir_letra_por_letra(texto, velocidad=0.05):
+    sys.stdout.write(ROSADO)
+    for letra in texto:
+        sys.stdout.write(letra)
+        sys.stdout.flush()
+        time.sleep(velocidad)
+    print()
 
-# if the lyrics don't sync you can manually adjust its' offset here
-# in seconds.,, positive number for backwards, negative for forwards.
-LYRIC_OFFSET = -1.7
+limpiar_consola()
+
+for texto, delay in subtitulos:
+    escribir_letra_por_letra(texto)
+    time.sleep(delay)
 
 
-def fetch_lrc_from_lrclib(title: str, artist: str = "") -> str | None:
-    try:
-        r = requests.get(
-            "https://lrclib.net/api/search",
-            params={"q": f"{title} {artist}".strip()},
-            timeout=10,
-        )
-        r.raise_for_status()
-        for item in r.json():
-            if item.get("syncedLyrics"):
-                return item["syncedLyrics"]
-    except Exception as e:
-        print("LRCLIB fetch failed:", e)
-    return None
-
-def find_closest_lrc(song_title: str, folder: str) -> str | None:
-    if not os.path.isdir(folder):
-        return None
-    bases = [os.path.splitext(f)[0] for f in os.listdir(folder)
-             if f.lower().endswith(".lrc")]
-    closest = difflib.get_close_matches(song_title, bases, n=1, cutoff=0.4)
-    return os.path.join(folder, closest[0] + ".lrc") if closest else None
-
-def parse_lrc(path: str):
-    pattern = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\](.*)")
-    out = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            m = pattern.match(line.strip())
-            if m:
-                mins, secs, txt = m.groups()
-                t = int(mins)*60 + float(secs) + LYRIC_OFFSET
-                out.append((max(0.0, t), txt.strip()))
-    return sorted(out)
-
-base = os.path.splitext(os.path.basename(AUDIO_FILE))[0]
-artist_guess, title_guess = ("", base)
-if "-" in base:
-    artist_guess, title_guess = [x.strip() for x in base.split("-", 1)]
-
-lyrics_path = None
-lrc_text = fetch_lrc_from_lrclib(title_guess, artist_guess)
-if lrc_text:
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".lrc")
-    tmp.write(lrc_text.encode("utf-8")); tmp.close()
-    lyrics_path = tmp.name
-    print("Fetched synced lyrics from LRCLIB.")
-else:
-    match = find_closest_lrc(title_guess, LRC_FOLDER)
-    if match:
-        lyrics_path = match
-        print(f"Using closest local match: {match}")
-    else:
-        print("No lyrics found online or locally.")
-
-lyrics = parse_lrc(lyrics_path) if lyrics_path else []
-
-data, samplerate = sf.read(AUDIO_FILE, dtype="float32")
-if data.ndim > 1:
-    data = np.mean(data, axis=1)
-data = data / np.max(np.abs(data))
-start_idx = int(START_TIME * samplerate)
-
-term_columns, _ = shutil.get_terminal_size((200, 80))
-columns = min(80, term_columns)
-center  = 6
-lyric_index = 0
-for i, (t, _) in enumerate(lyrics):
-    if t >= START_TIME:
-        lyric_index = max(0, i - 1)
-        break
-
-def smooth(vals, window=5):
-    if len(vals) < window: return vals
-    k = np.ones(window)/window
-    return np.convolve(vals, k, mode="same")
-
-def hsv_to_rgb(h,s,v):
-    i = int(h*6); f = h*6 - i
-    p = int(255*v*(1-s)); q = int(255*v*(1-f*s)); t = int(255*v*(1-(1-f)*s))
-    v = int(255*v); i = i % 6
-    return [(v,t,p),(q,v,p),(p,v,t),(p,q,v),(t,p,v),(v,p,q)][i]
-
-def colorize(text, r,g,b):
-    return f"\033[38;2;{r};{g};{b}m{text}\033[0m"
-
-def dim_color(text, r, g, b, factor=0.4):
-    rr = int(r*factor); gg = int(g*factor); bb = int(b*factor)
-    return f"\033[38;2;{rr};{gg};{bb}m{text}\033[0m"
-
-def render_lyrics_block(idx, r, g, b):
-    lines = []
-    if idx < len(lyrics):
-        lines.append(colorize(lyrics[idx][1], r, g, b))
-    for n in range(1, 3):
-        if idx + n < len(lyrics):
-            lines.append("")
-            lines.append(dim_color(lyrics[idx + n][1], r, g, b, 0.4))
-    return "\n".join(lines)
-
-def callback(outdata, frames, time_info, status):
-    global start_idx, lyric_index
-    if status: print(status, file=sys.stderr)
-
-    chunk = data[start_idx:start_idx+frames]
-    if len(chunk) < frames:
-        outdata[:len(chunk),0] = chunk
-        outdata[len(chunk):] = 0
-        raise sd.CallbackStop
-    else:
-        outdata[:,0] = chunk
-
-    play_time = start_idx / samplerate
-    if lyrics:
-        while lyric_index + 1 < len(lyrics) and play_time >= lyrics[lyric_index + 1][0]:
-            lyric_index += 1
-
-    step   = max(1, len(chunk)//columns)
-    levels = np.abs(chunk[::step])
-    levels = smooth(levels, window=6)
-    levels = np.interp(np.clip(levels,0,1), [0,1], [0,center-1]).astype(int)
-
-    hue = [0.15,0.3,0.6,0.8][int((play_time*0.2)%4)]
-    r,g,b = hsv_to_rgb(hue,0.5,0.9)
-
-    screen=[]
-    for row in range(center*2):
-        line=[]
-        for lvl in levels:
-            if row==center:
-                line.append(colorize("─",r,g,b))
-            elif row<center and (center-row)<=lvl:
-                line.append(colorize("█",r,g,b))
-            elif row>center and (row-center)<=lvl:
-                line.append(colorize("█",r,g,b))
-            else:
-                line.append(" ")
-        screen.append("".join(line))
-
-    if lyrics:
-        screen.append("")
-        screen.append(render_lyrics_block(lyric_index, r, g, b))
-
-    sys.stdout.write("\033[H\033[J" + "\n".join(screen))
-    sys.stdout.flush()
-    start_idx += frames
-
-with sd.OutputStream(channels=1, samplerate=samplerate,
-                     callback=callback, blocksize=BLOCKSIZE, latency="low"):
-    sd.sleep(int((len(data) - start_idx) / samplerate * 1000))
